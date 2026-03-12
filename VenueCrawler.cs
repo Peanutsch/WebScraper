@@ -5,31 +5,63 @@ using System.Collections.Concurrent;
 
 namespace WebScraper;
 
+/// <summary>
+/// Crawls venue pages from the Podiuminfo website and parses them into Venue objects.
+/// The crawler first collects all venue URLs and then visits each venue page
+/// to extract structured data.
+/// </summary>
 public class VenueCrawler
 {
+    /// <summary>
+    /// Shared HttpClient used for all HTTP requests.
+    /// </summary>
     private readonly HttpClient _http = new HttpClient();
+
+    /// <summary>
+    /// Base URL for the Podiuminfo website.
+    /// </summary>
     private const string BaseUrl = "https://www.podiuminfo.nl";
 
+    /// <summary>
+    /// Limits the number of concurrent requests.
+    /// Prevents triggering rate limiting by the server.
+    /// </summary>
     private readonly SemaphoreSlim _rateLimiter = new SemaphoreSlim(2);
-    // max 4 parallel requests
 
+    /// <summary>
+    /// Initializes the crawler and configures a user-agent header
+    /// so requests resemble a normal browser request.
+    /// </summary>
     public VenueCrawler()
     {
         _http.DefaultRequestHeaders.UserAgent.ParseAdd(
             "Mozilla/5.0 (compatible; VenueCrawler/1.0)");
     }
 
+    /// <summary>
+    /// Main crawling method.
+    /// 
+    /// Steps:
+    /// 1. Collect all venue links from the index pages.
+    /// 2. Visit each venue page.
+    /// 3. Parse venue information using <see cref="VenueParser"/>.
+    /// 4. Return a list of parsed venues.
+    /// </summary>
     public async Task<List<Objects.Venue>> CrawlAllVenues()
     {
-        var venueLinks = await CollectVenueLinks();
+        // Collect all venue URLs first
+        HashSet<string> venueLinks = await CollectVenueLinks();
 
         Logs.Log($"Total venue links found: {venueLinks.Count}");
 
-        var venues = new List<Objects.Venue>(); // Normal list to maintain order
+        // List to store parsed venues
+        List<Objects.Venue> venues = new List<Objects.Venue>();
+
         int count = 0;
 
-        foreach (var url in venueLinks)
+        foreach (string url in venueLinks)
         {
+            // Temporary limit for testing
             if (count >= 5)
             {
                 Logs.Log("Reached 5 venues, stopping...");
@@ -38,9 +70,11 @@ public class VenueCrawler
 
             try
             {
-                var html = await GetPageWithRetry(url);
+                // Download the HTML page
+                string html = await GetPageWithRetry(url);
 
-                var venue = VenueParser.Parse(html);
+                // Parse venue data
+                Objects.Venue? venue = VenueParser.Parse(html);
 
                 if (venue == null)
                 {
@@ -50,6 +84,7 @@ public class VenueCrawler
                 {
                     venues.Add(venue);
                     count++;
+
                     Logs.Log($"Parsed {count}: {url}");
                 }
             }
@@ -58,13 +93,24 @@ public class VenueCrawler
                 Logs.Log($"Failed {url} : {ex.Message}");
             }
 
-            // random delay to avoid rate limits
+            // Random delay between requests to avoid server rate limiting
             Random rnd = new Random();
             await Task.Delay(rnd.Next(4000, 8000));
         }
 
         return venues;
     }
+
+    #region === TEST ===
+    /*
+    -----------------------------------------------------------------------
+    Parallel crawler version (currently disabled)
+
+    This version performs parallel crawling using SemaphoreSlim to limit
+    concurrency. It significantly improves performance but increases the
+    chance of server rate limiting.
+    -----------------------------------------------------------------------
+    */
 
     /*
     public async Task<List<Objects.Venue>> CrawlAllVenues()
@@ -97,7 +143,8 @@ public class VenueCrawler
             finally
             {
                 Random rnd = new Random();
-                await Task.Delay(rnd.Next(5000, 8000)); // Random delay between 5-8 seconds
+                await Task.Delay(rnd.Next(5000, 8000));
+
                 _rateLimiter.Release();
             }
         });
@@ -107,65 +154,96 @@ public class VenueCrawler
         return venues.ToList();
     }
     */
+    #endregion
 
+    /// <summary>
+    /// Collects all venue page links from the alphabetical listing pages.
+    /// 
+    /// Example pages:
+    /// https://www.podiuminfo.nl/podium/letter/a/
+    /// https://www.podiuminfo.nl/podium/letter/b/
+    /// </summary>
     private async Task<HashSet<string>> CollectVenueLinks()
     {
-        var letters = "abcdefghijklmnopqrstuvwxyz".ToCharArray()
+        // Letters used by the Podiuminfo venue index
+        List<string> letters = "abcdefghijklmnopqrstuvwxyz".ToCharArray()
             .Select(c => c.ToString())
             .ToList();
 
+        // Extra category found "overig", used by the site
         letters.Add("overig");
 
-        var links = new HashSet<string>();
+        HashSet<string> links = new HashSet<string>();
 
-        foreach (var letter in letters)
+        foreach (string letter in letters)
         {
-            var url = $"{BaseUrl}/podium/letter/{letter}/";
+            string url = $"{BaseUrl}/podium/letter/{letter}/";
 
             Logs.Log($"> Scanning {url}");
 
-            var html = await GetPageWithRetry(url);
+            // Download index page
+            string html = await GetPageWithRetry(url);
 
-            var extracted = ExtractVenueLinks(html);
+            // Extract venue links
+            List<string> extracted = ExtractVenueLinks(html);
 
-            foreach (var l in extracted)
-                links.Add(l);
+            foreach (string link in extracted)
+                links.Add(link);
 
+            // Small delay between index pages
             await Task.Delay(1500);
         }
 
         Logs.Log($"Returned {links.Count} unique venue links");
+
         return links;
     }
 
+    /// <summary>
+    /// Extracts venue URLs from an index page.
+    /// 
+    /// The method scans all anchor tags and selects those matching
+    /// the pattern:
+    /// /podium/{id}/
+    /// </summary>
     private List<string> ExtractVenueLinks(string html)
     {
-        var doc = new HtmlDocument();
+        HtmlDocument doc = new HtmlDocument();
         doc.LoadHtml(html);
 
-        var nodes = doc.DocumentNode.SelectNodes("//a[@href]");
+        HtmlNodeCollection nodes = doc.DocumentNode.SelectNodes("//a[@href]");
 
-        var results = new List<string>();
+        List<string> results = new List<string>();
 
         if (nodes == null)
             return results;
 
         foreach (var node in nodes)
         {
-            var href = node.GetAttributeValue("href", "");
+            string href = node.GetAttributeValue("href", "");
 
+            // Only accept venue links
             if (!Regex.IsMatch(href, @"\/podium\/\d+\/"))
                 continue;
 
+            // Convert relative links to absolute URLs
             if (!href.StartsWith("http"))
                 href = BaseUrl + href;
-
+            
+            // Add to results
             results.Add(href);
         }
 
+        // Remove duplicates
         return results.Distinct().ToList();
     }
 
+    /// <summary>
+    /// Downloads a webpage with retry logic.
+    /// 
+    /// If the request fails, it will retry up to 3 times before throwing
+    /// an exception.
+    /// </summary>
     private async Task<string> GetPageWithRetry(string url)
     {
         for (int i = 0; i < 3; i++)
@@ -179,6 +257,7 @@ public class VenueCrawler
             catch
             {
                 Logs.Log($"Retry {i + 1} for {url}");
+
                 await Task.Delay(3000);
             }
         }
@@ -186,14 +265,17 @@ public class VenueCrawler
         throw new Exception($"Failed after retries: {url}");
     }
 
+    /// <summary>
+    /// Saves the parsed venues to a JSON file.
+    /// </summary>
     public static void SaveJson(List<Objects.Venue> venues, string path)
     {
-        var options = new JsonSerializerOptions
+        JsonSerializerOptions options = new JsonSerializerOptions
         {
-            WriteIndented = true
+            WriteIndented = true // Format the JSON with indentation for readability
         };
 
-        var json = JsonSerializer.Serialize(venues, options);
+        string json = JsonSerializer.Serialize(venues, options);
 
         File.WriteAllText(path, json);
     }
