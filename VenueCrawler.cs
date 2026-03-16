@@ -65,7 +65,7 @@ public class VenueCrawler
             // Temporary limit of 5 venues for testing
             if (countParsed >= 5)
             {
-                Logs.Log($"[VenueCrawler.Crawl5Venues] Reached 5 venues. Skipped {countSkipped} venues. Stop Program...");
+                Logs.Log($"[VenueCrawler.Crawl5Venues]  Reached 5 venues. Skipped {countSkipped} venues. Stop Program...");
                 break;
             }
 
@@ -79,12 +79,12 @@ public class VenueCrawler
 
                 if (venue == null)
                 {
-                    Logs.Log($"[VenueCrawler.Crawl5Venues] > Parse returned NULL: {url}");
+                    Logs.Log($"[VenueCrawler.Crawl5Venues]  Parse returned NULL: {url}");
                 }
                 else if (string.IsNullOrWhiteSpace(venue.Email))
                 {
                     countSkipped++;
-                    Logs.Log($"[VenueCrawler.Crawl5Venues] [NO EMAIL] > Skipped {venue.Name} {venue.City}: {url}");
+                    Logs.Log($"[VenueCrawler.Crawl5Venues] [SKIPPED]    No Email {venue.Name}, {venue.City}: {url}");
                 }
                 else
                 {
@@ -92,12 +92,12 @@ public class VenueCrawler
                     venues.Add(venue);
                     countParsed++;
 
-                    Logs.Log($"Parsed venue #{countParsed}: {url}");
+                    Logs.Log($"[VenueCrawler.Crawl5Venues]  Parsed venue #{countParsed}: {url}");
                 }
             }
             catch (Exception ex)
             {
-                Logs.Log($"[VenueCrawler.Crawl5Venues] > Failed {url} : {ex.Message}");
+                Logs.Log($"[VenueCrawler.Crawl5Venues]  Failed {url} : {ex.Message}");
             }
 
             // Random delay between requests to avoid server rate limiting
@@ -186,7 +186,7 @@ public class VenueCrawler
         {
             string url = $"{BaseUrl}/podium/letter/{letter}/";
 
-            Logs.Log($"[VenuwCrawler.CollectVenueLinks] > Scanning {url}");
+            Logs.Log($"[VenuwCrawler.CollectVenueLinks] Scanning {url}");
 
             // Download index page
             string html = await GetPageWithRetry(url);
@@ -201,7 +201,7 @@ public class VenueCrawler
             await Task.Delay(1500);
         }
 
-        Logs.Log($"[VenuwCrawler.CollectVenueLinks] > Returned [{links.Count}] unique venue links");
+        Logs.Log($"[VenuwCrawler.CollectVenueLinks] Returned [{links.Count}] unique venue links");
 
         return links;
     }
@@ -258,19 +258,19 @@ public class VenueCrawler
         {
             try
             {
-                Logs.Log($"[VanueCrawler.GetPageWithRetry] Requesting {url}");
+                Logs.Log($"[VanueCrawler.GetPageWithRetry]  Requesting {url}");
 
                 return await _http.GetStringAsync(url);
             }
             catch
             {
-                Logs.Log($"[VanueCrawler.GetPageWithRetry] Retry {i + 1} for {url}");
+                Logs.Log($"[VanueCrawler.GetPageWithRetry]  Retry [{i + 1}] for {url}");
                 // Wait before retrying 3000 ms
                 await Task.Delay(3000);
             }
         }
 
-        throw new Exception($"[VanueCrawler.GetPageWithRetry] Failed after 3 retries: {url}");
+        throw new Exception($"[VanueCrawler.GetPageWithRetry]   Failed after 3 retries: {url}");
     }
 
     /// <summary>
