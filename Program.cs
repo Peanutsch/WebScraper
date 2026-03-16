@@ -12,11 +12,11 @@ namespace WebScraper
 
             VenueCrawler crawler = new VenueCrawler();
 
-            List<Venue> venues = await crawler.CrawlAllVenues();
+            List<Venue> venues = await crawler.Crawl5Venues();
 
             VenueCrawler.SaveJson(venues, "venues.json");
 
-            Logs.Log($"Saved {venues.Count} venues");
+            Logs.Log($"\n[Program.Main] > Saved {venues.Count} venues");
 
             /*
             using HttpClient client = new HttpClient();

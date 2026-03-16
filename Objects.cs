@@ -8,15 +8,15 @@ namespace WebScraper
     {
         public class Venue
         {
-            public string Name { get; init; } = default!;
-            public string Url { get; init; } = default!;
-            public string Email { get; init; } = default!;
-            public string SameAs { get; init; } = default!;
-            public string Street { get; init; } = default!;
-            public string City { get; init; } = default!;            
-            public string Region { get; init; } = default!;
-            public string PostalCode { get; init; } = default!;
-            public string Country { get; init; } = default!;
+            public required string Name { get; init; }
+            public required string PodiumInfoURL { get; init; }
+            public string? Email { get; init; }
+            public string? VenueURL { get; init; }
+            public string? Street { get; init; }
+            public string? City { get; init; }
+            public string? Region { get; init; }
+            public string? PostalCode { get; init; }
+            public string? Country { get; init; }
         }
     }
 }

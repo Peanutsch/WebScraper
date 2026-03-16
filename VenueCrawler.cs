@@ -39,7 +39,7 @@ public class VenueCrawler
     }
 
     /// <summary>
-    /// Main crawling method.
+    /// Main crawling method. Testing with max of 5 venues.
     /// 
     /// Steps:
     /// 1. Collect all venue links from the index pages.
@@ -47,7 +47,7 @@ public class VenueCrawler
     /// 3. Parse venue information using <see cref="VenueParser"/>.
     /// 4. Return a list of parsed venues.
     /// </summary>
-    public async Task<List<Objects.Venue>> CrawlAllVenues()
+    public async Task<List<Objects.Venue>> Crawl5Venues()
     {
         // Collect all venue URLs first
         HashSet<string> venueLinks = await CollectVenueLinks();
@@ -57,14 +57,15 @@ public class VenueCrawler
         // List to store parsed venues
         List<Objects.Venue> venues = new List<Objects.Venue>();
 
-        int count = 0;
+        int countParsed = 0;
+        int countSkipped = 0;
 
         foreach (string url in venueLinks)
         {
-            // Temporary limit for testing
-            if (count >= 5)
+            // Temporary limit of 5 venues for testing
+            if (countParsed >= 5)
             {
-                Logs.Log("Reached 5 venues, stopping...");
+                Logs.Log($"[VenueCrawler.Crawl5Venues] Reached 5 venues. Skipped {countSkipped} venues. Stop Program...");
                 break;
             }
 
@@ -78,19 +79,25 @@ public class VenueCrawler
 
                 if (venue == null)
                 {
-                    Logs.Log($"Parse returned NULL: {url}");
+                    Logs.Log($"[VenueCrawler.Crawl5Venues] > Parse returned NULL: {url}");
+                }
+                else if (string.IsNullOrWhiteSpace(venue.Email))
+                {
+                    countSkipped++;
+                    Logs.Log($"[VenueCrawler.Crawl5Venues] [NO EMAIL] > Skipped {venue.Name} {venue.City}: {url}");
                 }
                 else
                 {
+                    // Add to List vanues and increment count
                     venues.Add(venue);
-                    count++;
+                    countParsed++;
 
-                    Logs.Log($"Parsed {count}: {url}");
+                    Logs.Log($"Parsed venue #{countParsed}: {url}");
                 }
             }
             catch (Exception ex)
             {
-                Logs.Log($"Failed {url} : {ex.Message}");
+                Logs.Log($"[VenueCrawler.Crawl5Venues] > Failed {url} : {ex.Message}");
             }
 
             // Random delay between requests to avoid server rate limiting
@@ -179,7 +186,7 @@ public class VenueCrawler
         {
             string url = $"{BaseUrl}/podium/letter/{letter}/";
 
-            Logs.Log($"> Scanning {url}");
+            Logs.Log($"[VenuwCrawler.CollectVenueLinks] > Scanning {url}");
 
             // Download index page
             string html = await GetPageWithRetry(url);
@@ -194,7 +201,7 @@ public class VenueCrawler
             await Task.Delay(1500);
         }
 
-        Logs.Log($"Returned {links.Count} unique venue links");
+        Logs.Log($"[VenuwCrawler.CollectVenueLinks] > Returned [{links.Count}] unique venue links");
 
         return links;
     }
@@ -206,7 +213,7 @@ public class VenueCrawler
     /// the pattern:
     /// /podium/{id}/
     /// </summary>
-    private List<string> ExtractVenueLinks(string html)
+    private static List<string> ExtractVenueLinks(string html)
     {
         HtmlDocument doc = new HtmlDocument();
         doc.LoadHtml(html);
@@ -218,15 +225,15 @@ public class VenueCrawler
         if (nodes == null)
             return results;
 
-        foreach (var node in nodes)
+        foreach (HtmlNode node in nodes)
         {
             string href = node.GetAttributeValue("href", "");
 
-            // Only accept venue links
+            // Only accept venue links: /podium/{id}/
             if (!Regex.IsMatch(href, @"\/podium\/\d+\/"))
                 continue;
 
-            // Convert relative links to absolute URLs
+            // Convert relative links to absolute URLs, e.g: /podium/123/ to https://www.podiuminfo.nl/podium/123/
             if (!href.StartsWith("http"))
                 href = BaseUrl + href;
             
@@ -234,7 +241,7 @@ public class VenueCrawler
             results.Add(href);
         }
 
-        // Remove duplicates
+        // Remove duplicates and return
         return results.Distinct().ToList();
     }
 
@@ -246,23 +253,24 @@ public class VenueCrawler
     /// </summary>
     private async Task<string> GetPageWithRetry(string url)
     {
+        // Retry up to 3 times with a delay between attempts
         for (int i = 0; i < 3; i++)
         {
             try
             {
-                Logs.Log($"Requesting ({i}) {url}");
+                Logs.Log($"[VanueCrawler.GetPageWithRetry] Requesting {url}");
 
                 return await _http.GetStringAsync(url);
             }
             catch
             {
-                Logs.Log($"Retry {i + 1} for {url}");
-
+                Logs.Log($"[VanueCrawler.GetPageWithRetry] Retry {i + 1} for {url}");
+                // Wait before retrying 3000 ms
                 await Task.Delay(3000);
             }
         }
 
-        throw new Exception($"Failed after retries: {url}");
+        throw new Exception($"[VanueCrawler.GetPageWithRetry] Failed after 3 retries: {url}");
     }
 
     /// <summary>
@@ -272,7 +280,8 @@ public class VenueCrawler
     {
         JsonSerializerOptions options = new JsonSerializerOptions
         {
-            WriteIndented = true // Format the JSON with indentation for readability
+            // Format the JSON with indentation for readability
+            WriteIndented = true 
         };
 
         string json = JsonSerializer.Serialize(venues, options);
