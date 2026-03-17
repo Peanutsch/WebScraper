@@ -6,219 +6,39 @@ using static WebScraper.Objects;
 namespace WebScraper;
 
 /// <summary>
-/// Parses HTML pages of venue profiles and converts them into <see cref="Venue"/> objects.
-/// 
-/// The parser extracts information from two sources:
-/// 1. JSON-LD structured data embedded in the page
-/// 2. The contact section within the HTML DOM
+/// Parse HTML venue pages and return a <see cref="Venue"/> instance.
+/// This class extracts structured JSON-LD (schema.org) data and falls back
+/// to the contact section in the page for email/website information.
+/// The implementation is intentionally compact and uses tuples for internal
+/// transfer of extracted values.
 /// </summary>
 public sealed class VenueParser
 {
-    #region === PUBLIC INTERFACE ===
     /// <summary>
-    /// Parses a venue HTML page and extracts venue information.
+    /// Parse the provided HTML and produce a <see cref="Venue"/> object.
+    /// Returns null when required data (name) cannot be found.
     /// </summary>
-    /// <param name="html">Raw HTML content of the venue page.</param>
-    /// <returns>
-    /// A populated <see cref="Venue"/> object if parsing succeeds,
-    /// otherwise <c>null</c> if essential information (e.g. venue name) is missing.
-    /// </returns>
+    /// <param name="html">Raw HTML content of a venue page.</param>
+    /// <returns>Populated <see cref="Venue"/> or null when parsing fails.</returns>
     public static Venue? Parse(string html)
     {
-        // Load the HTML into an HtmlAgilityPack document
-        HtmlDocument doc = LoadDocument(html);
-
-        // Extract structured JSON-LD venue data
-        JsonVenueData jsonData = ParseJsonLd(doc);
-
-        // Extract contact information from the contact section
-        ContactData contactData = ParseContactInfo(doc);
-
-        // If the venue name is missing, assume parsing failed
-        if (string.IsNullOrWhiteSpace(jsonData.Name))
-            return null;
-
-        // Combine the extracted data into a final Venue object
-        return CreateVenue(jsonData, contactData);
-    }
-    #endregion
-
-    #region === HTML PARSING ===
-    /// <summary>
-    /// Creates and loads an <see cref="HtmlDocument"/> from raw HTML.
-    /// </summary>
-    /// <param name="html">Raw HTML content.</param>
-    /// <returns>A parsed HTML document.</returns>
-    private static HtmlDocument LoadDocument(string html)
-    {
-        HtmlDocument doc = new HtmlDocument
+        // Build and load the HTML document with tolerant parsing options
+        var doc = new HtmlDocument
         {
-            // Attempt to fix malformed HTML structures automatically
-            OptionFixNestedTags = true,
-
-            // Ensure all open tags are closed at the end of the document
-            OptionAutoCloseOnEnd = true
+            OptionFixNestedTags = true, // help with malformed HTML
+            OptionAutoCloseOnEnd = true // ensure document is well-formed
         };
-
-        // Parse the HTML content
         doc.LoadHtml(html);
 
-        return doc;
-    }
-    #endregion
+        // Try to extract structured data first (preferred source)
+        var json = ParseJsonLd(doc);
+        if (string.IsNullOrWhiteSpace(json.Name))
+            return null; // name is required
 
-    #region === JSON-LD PARSING ===
-    /// <summary>
-    /// Searches the document for JSON-LD blocks and extracts venue data.
-    /// </summary>
-    /// <param name="doc">The parsed HTML document.</param>
-    /// <returns>A <see cref="JsonVenueData"/> object containing extracted values.</returns>
-    private static JsonVenueData ParseJsonLd(HtmlDocument doc)
-    {
-        // Select all JSON-LD script tags
-        HtmlNodeCollection scripts =
-            doc.DocumentNode.SelectNodes("//script[@type='application/ld+json']");
+        // Extract contact details from page as a fallback for email/website
+        var contact = ParseContactInfo(doc);
 
-        // If no scripts were found, return an empty data object
-        if (scripts == null)
-            return new JsonVenueData();
-
-        // Iterate through all JSON-LD blocks
-        foreach (HtmlNode script in scripts)
-        {
-            try
-            {
-                // Parse the JSON content
-                using JsonDocument jsonDoc = JsonDocument.Parse(script.InnerText);
-                JsonElement root = jsonDoc.RootElement;
-
-                // Ensure the JSON block contains a @type property
-                if (!root.TryGetProperty("@type", out JsonElement typeProp))
-                    continue;
-
-                // Only process objects describing a MusicVenue
-                if (typeProp.GetString() != "MusicVenue")
-                    continue;
-
-                // Extract venue information from the JSON object
-                return ExtractVenueFromJson(root);
-            }
-            catch
-            {
-                // Ignore malformed JSON blocks and continue searching
-            }
-        }
-
-        // Return an empty data object if no suitable JSON-LD block was found
-        return new JsonVenueData();
-    }
-
-    /// <summary>
-    /// Extracts venue data from a JSON-LD element.
-    /// </summary>
-    /// <param name="root">The root JSON element representing the venue.</param>
-    /// <returns>A populated <see cref="JsonVenueData"/> object.</returns>
-    private static JsonVenueData ExtractVenueFromJson(JsonElement root)
-    {
-        JsonVenueData data = new JsonVenueData
-        {
-            // Required fields
-            Url = root.GetProperty("url").GetString(),
-            Name = root.GetProperty("name").GetString(),
-        };
-
-        // Optional external website
-        if (root.TryGetProperty("sameAs", out JsonElement sameAs))
-            data.Website = sameAs.GetString();
-
-        // Extract address information if available
-        if (root.TryGetProperty("address", out JsonElement address))
-        {
-            data.Street = address.GetProperty("streetAddress").GetString();
-            data.PostalCode = address.GetProperty("postalCode").GetString();
-            data.City = address.GetProperty("addressLocality").GetString();
-            data.Region = address.GetProperty("addressRegion").GetString();
-            data.Country = address.GetProperty("addressCountry").GetString();
-        }
-
-        return data;
-    }
-    #endregion
-
-    #region === CONTACT PARSING ===
-    /// <summary>
-    /// Extracts contact information from the contact section of the page.
-    /// </summary>
-    /// <param name="doc">The parsed HTML document.</param>
-    /// <returns>A <see cref="ContactData"/> object containing email and website.</returns>
-    private static ContactData ParseContactInfo(HtmlDocument doc)
-    {
-        // Locate the contact section within the page
-        HtmlNode contactNode =
-            doc.DocumentNode.SelectSingleNode("//section[contains(@class,'podium_contact')]");
-
-        // If the contact section does not exist, return empty contact data
-        if (contactNode == null)
-            return new ContactData();
-
-        // Extract email address
-        string? email = ExtractContactEmail(contactNode);
-
-        // Extract website link
-        string? website = ExtractWebsite(contactNode);
-
-        return new ContactData
-        {
-            Email = email,
-            Website = website
-        };
-    }
-
-    /// <summary>
-    /// Extracts an email address from the contact section.
-    /// </summary>
-    /// <param name="contactNode">The HTML node containing contact information.</param>
-    /// <returns>The decoded or detected email address, if available.</returns>
-    private static string? ExtractContactEmail(HtmlNode contactNode)
-    {
-        // Cloudflare often protects email addresses using data-cfemail
-        HtmlNode cfEmailNode = contactNode.SelectSingleNode(".//a[@data-cfemail]");
-
-        if (cfEmailNode != null)
-        {
-            // Decode Cloudflare protected email
-            string encoded = cfEmailNode.GetAttributeValue("data-cfemail", "");
-            return DecodeCloudflareEmail(encoded);
-        }
-
-        // Fallback: attempt to extract email from visible text
-        return ExtractEmail(contactNode.InnerText);
-    }
-
-    /// <summary>
-    /// Extracts a website URL from the contact section.
-    /// </summary>
-    /// <param name="contactNode">The HTML node containing contact information.</param>
-    /// <returns>The website URL if found.</returns>
-    private static string? ExtractWebsite(HtmlNode contactNode)
-    {
-        // Look for the first anchor tag containing an HTTP link
-        HtmlNode websiteNode =
-            contactNode.SelectSingleNode(".//a[starts-with(@href,'http')]");
-
-        return websiteNode?.GetAttributeValue("href", null!);
-    }
-    #endregion
-
-    #region === OBJECT CREATION ===
-    /// <summary>
-    /// Combines JSON and contact data into a final <see cref="Venue"/> object.
-    /// </summary>
-    /// <param name="json">Structured JSON venue data.</param>
-    /// <param name="contact">Contact information extracted from HTML.</param>
-    /// <returns>A populated <see cref="Venue"/> instance.</returns>
-    private static Venue CreateVenue(JsonVenueData json, ContactData contact)
-    {
+        // Compose final Venue object using JSON-LD values first, contact fallbacks
         return new Venue
         {
             Name = json.Name!,
@@ -232,77 +52,118 @@ public sealed class VenueParser
             Country = json.Country
         };
     }
-    #endregion
 
-    #region === EMAIL EXTRACTION & DECODING ===
     /// <summary>
-    /// Attempts to extract a plain email address from a text block using a regex pattern.
+    /// Search for JSON-LD script blocks and extract venue data.
+    /// Returns a tuple with common venue fields (Url, Name, Website, Street, City, Region, PostalCode, Country).
     /// </summary>
-    /// <param name="text">Text containing a potential email address.</param>
-    /// <returns>The detected email address if found; otherwise <c>null</c>.</returns>
+    /// <param name="doc">Parsed HTML document.</param>
+    /// <returns>Tuple with extracted values or nulls when not present.</returns>
+    // Returns (Url, Name, Website, Street, City, Region, PostalCode, Country)
+    private static (string? Url, string? Name, string? Website, string? Street, string? City, string? Region, string? PostalCode, string? Country) ParseJsonLd(HtmlDocument doc)
+    {
+        var scripts = doc.DocumentNode.SelectNodes("//script[@type='application/ld+json']");
+        if (scripts == null)
+            return (null, null, null, null, null, null, null, null);
+
+        foreach (var script in scripts)
+        {
+            try
+            {
+                // Parse the JSON content of the script block
+                using var jsonDoc = JsonDocument.Parse(script.InnerText);
+                var root = jsonDoc.RootElement;
+
+                // Only consider JSON nodes that declare a schema.org type
+                if (!root.TryGetProperty("@type", out var typeProp))
+                    continue;
+                if (typeProp.GetString() != "MusicVenue")
+                    continue; // skip unrelated structured data
+
+                string? url = root.TryGetProperty("url", out var p) ? p.GetString() : null;
+                string? name = root.TryGetProperty("name", out var n) ? n.GetString() : null;
+                string? website = root.TryGetProperty("sameAs", out var s) ? s.GetString() : null;
+
+                string? street = null; string? postal = null; string? city = null; string? region = null; string? country = null;
+                if (root.TryGetProperty("address", out var address))
+                {
+                    // Extract common address fields when present
+                    street = address.TryGetProperty("streetAddress", out var sa) ? sa.GetString() : null;
+                    postal = address.TryGetProperty("postalCode", out var pc) ? pc.GetString() : null;
+                    city = address.TryGetProperty("addressLocality", out var al) ? al.GetString() : null;
+                    region = address.TryGetProperty("addressRegion", out var ar) ? ar.GetString() : null;
+                    country = address.TryGetProperty("addressCountry", out var ac) ? ac.GetString() : null;
+                }
+
+                return (url, name, website, street, city, region, postal, country);
+            }
+            catch
+            {
+                // ignore malformed JSON-LD blocks and continue searching
+            }
+        }
+
+        return (null, null, null, null, null, null, null, null);
+    }
+
+    /// <summary>
+    /// Extract email and website from the page contact section.
+    /// Prefer Cloudflare-protected email if present, otherwise search visible text.
+    /// </summary>
+    /// <param name="doc">Parsed HTML document.</param>
+    /// <returns>Tuple containing Email and Website or nulls when not found.</returns>
+    // Returns (Email, Website)
+    private static (string? Email, string? Website) ParseContactInfo(HtmlDocument doc)
+    {
+        var contactNode = doc.DocumentNode.SelectSingleNode("//section[contains(@class,'podium_contact')]");
+        if (contactNode == null)
+            return (null, null);
+
+        // Cloudflare protected email
+        var cf = contactNode.SelectSingleNode(".//a[@data-cfemail]");
+        string? email = null;
+        if (cf != null)
+        {
+            var encoded = cf.GetAttributeValue("data-cfemail", "");
+            if (!string.IsNullOrEmpty(encoded))
+                email = DecodeCloudflareEmail(encoded);
+        }
+        else
+        {
+            // Fallback: try to find a plain email address in the contact text
+            email = ExtractEmail(contactNode.InnerText);
+        }
+
+        var websiteNode = contactNode.SelectSingleNode(".//a[starts-with(@href,'http')]");
+        string? website = websiteNode?.GetAttributeValue("href", null!);
+
+        return (email, website);
+    }
+
+    /// <summary>
+    /// Attempt to locate a plain email address inside a text block using a regex.
+    /// </summary>
     private static string? ExtractEmail(string? text)
     {
         if (string.IsNullOrWhiteSpace(text))
             return null;
-
-        Match match = Regex.Match(
-            text,
-            @"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}",
-            RegexOptions.IgnoreCase);
-
-        return match.Success ? match.Value : null;
+        var m = Regex.Match(text, "[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}", RegexOptions.IgnoreCase);
+        return m.Success ? m.Value : null;
     }
 
     /// <summary>
-    /// Decodes an email address protected by Cloudflare's email protection.
+    /// Decode Cloudflare's email protection hex string.
+    /// The first byte is the XOR key for the remaining bytes.
     /// </summary>
-    /// <param name="encoded">Hexadecimal encoded email string.</param>
-    /// <returns>The decoded email address.</returns>
     private static string DecodeCloudflareEmail(string encoded)
     {
-        // Convert hexadecimal string to byte array
-        List<byte> bytes = new();
-
+        var bytes = new List<byte>();
         for (int i = 0; i < encoded.Length; i += 2)
             bytes.Add(Convert.ToByte(encoded.Substring(i, 2), 16));
-
-        // The first byte represents the XOR key
         int key = bytes[0];
-
-        // Prepare result buffer excluding the key byte
         char[] result = new char[bytes.Count - 1];
-
-        // Decode each byte using XOR with the key
         for (int i = 1; i < bytes.Count; i++)
             result[i - 1] = (char)(bytes[i] ^ key);
-
         return new string(result);
     }
-    #endregion
-
-    #region === INTERNAL DATA STRUCTURES ===
-    /// <summary>
-    /// Internal container for venue data extracted from JSON-LD.
-    /// </summary>
-    private class JsonVenueData
-    {
-        public string? Url;
-        public string? Name;
-        public string? Website;
-        public string? Street;
-        public string? City;
-        public string? Region;
-        public string? PostalCode;
-        public string? Country;
-    }
-
-    /// <summary>
-    /// Internal container for contact information extracted from HTML.
-    /// </summary>
-    private class ContactData
-    {
-        public string? Email;
-        public string? Website;
-    }
-#endregion
 }

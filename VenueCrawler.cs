@@ -10,6 +10,11 @@ namespace WebScraper;
 /// The crawler first collects all venue URLs and then visits each venue page
 /// to extract structured data.
 /// </summary>
+/// <summary>
+/// Crawl Podiuminfo venue pages and parse them into <see cref="Objects.Venue"/> instances.
+/// The crawler collects venue links from alphabetical index pages and visits each
+/// venue page to extract structured data using <see cref="VenueParser"/>.
+/// </summary>
 public class VenueCrawler
 {
     /// <summary>
@@ -39,14 +44,11 @@ public class VenueCrawler
     }
 
     /// <summary>
-    /// Main crawling method. Testing with max of 5 venues.
-    /// 
-    /// Steps:
-    /// 1. Collect all venue links from the index pages.
-    /// 2. Visit each venue page.
-    /// 3. Parse venue information using <see cref="VenueParser"/>.
-    /// 4. Return a list of parsed venues.
+    /// Crawl up to 5 venue pages and return parsed venues.
+    /// This method is intentionally limited for testing and demonstrates
+    /// the crawling and parsing workflow.
     /// </summary>
+    /// <returns>List of parsed <see cref="Objects.Venue"/> objects.</returns>
     public async Task<List<Objects.Venue>> Crawl5Venues()
     {
         // Collect all venue URLs first
@@ -60,6 +62,7 @@ public class VenueCrawler
         int countParsed = 0;
         int countSkipped = 0;
 
+        // Visit every discovered venue link (stopping at 5 parsed venues)
         foreach (string url in venueLinks)
         {
             // Temporary limit of 5 venues for testing
@@ -71,33 +74,35 @@ public class VenueCrawler
 
             try
             {
-                // Download the HTML page
+                // Download the venue page with retry logic
                 string html = await GetPageWithRetry(url);
 
-                // Parse venue data
+                // Parse the downloaded HTML into a Venue object
                 Objects.Venue? venue = VenueParser.Parse(html);
 
                 if (venue == null)
                 {
-                    Logs.Log($"[VenueCrawler.Crawl5Venues]  Parse returned NULL: {url}");
+                    Logs.Log($"[VenueCrawler.Crawl5Venues]  Parse returned NULL:    {url}");
                 }
                 else if (string.IsNullOrWhiteSpace(venue.Email))
                 {
+                    // Skip venues without email addresses
                     countSkipped++;
-                    Logs.Log($"[VenueCrawler.Crawl5Venues] [SKIPPED]    No Email {venue.Name}, {venue.City}: {url}");
+                    Logs.Log($"[VenueCrawler.Crawl5Venues] [SKIPPED]    No Email    {venue.Name}, {venue.City}: {url}");
                 }
                 else
                 {
-                    // Add to List vanues and increment count
+                    // Keep parsed venue and update counter
                     venues.Add(venue);
                     countParsed++;
 
-                    Logs.Log($"[VenueCrawler.Crawl5Venues]  Parsed venue #{countParsed}: {url}");
+                    Logs.Log($"[VenueCrawler.Crawl5Venues]  Parsed venue #{countParsed}:    {url}");
                 }
             }
             catch (Exception ex)
             {
-                Logs.Log($"[VenueCrawler.Crawl5Venues]  Failed {url} : {ex.Message}");
+                // Log individual page failures and continue
+                Logs.Log($"[VenueCrawler.Crawl5Venues]  Failed  {url}:   {ex.Message}");
             }
 
             // Random delay between requests to avoid server rate limiting
@@ -186,22 +191,20 @@ public class VenueCrawler
         {
             string url = $"{BaseUrl}/podium/letter/{letter}/";
 
-            Logs.Log($"[VenuwCrawler.CollectVenueLinks] Scanning {url}");
+            Logs.Log($"[VenuwCrawler.CollectVenueLinks] Scanning    {url}");
 
-            // Download index page
+            // Download index page and extract links to individual venues
             string html = await GetPageWithRetry(url);
-
-            // Extract venue links
             List<string> extracted = ExtractVenueLinks(html);
 
             foreach (string link in extracted)
                 links.Add(link);
 
-            // Small delay between index pages
+            // Be kind to the server: small delay between requests
             await Task.Delay(1500);
         }
 
-        Logs.Log($"[VenuwCrawler.CollectVenueLinks] Returned [{links.Count}] unique venue links");
+        Logs.Log($"\n[VenuwCrawler.CollectVenueLinks] Returned [{links.Count}] unique venue links\n");
 
         return links;
     }
@@ -210,8 +213,7 @@ public class VenueCrawler
     /// Extracts venue URLs from an index page.
     /// 
     /// The method scans all anchor tags and selects those matching
-    /// the pattern:
-    /// /podium/{id}/
+    /// the pattern /podium/{id}/
     /// </summary>
     private static List<string> ExtractVenueLinks(string html)
     {
@@ -229,15 +231,14 @@ public class VenueCrawler
         {
             string href = node.GetAttributeValue("href", "");
 
-            // Only accept venue links: /podium/{id}/
+            // Only accept venue links of the form /podium/{id}/
             if (!Regex.IsMatch(href, @"\/podium\/\d+\/"))
                 continue;
 
-            // Convert relative links to absolute URLs, e.g: /podium/123/ to https://www.podiuminfo.nl/podium/123/
+            // Convert relative links to absolute URLs when necessary
             if (!href.StartsWith("http"))
                 href = BaseUrl + href;
-            
-            // Add to results
+
             results.Add(href);
         }
 
@@ -258,19 +259,19 @@ public class VenueCrawler
         {
             try
             {
-                Logs.Log($"[VanueCrawler.GetPageWithRetry]  Requesting {url}");
+                Logs.Log($"[VanueCrawler.GetPageWithRetry]  Requesting  {url}");
 
                 return await _http.GetStringAsync(url);
             }
             catch
             {
-                Logs.Log($"[VanueCrawler.GetPageWithRetry]  Retry [{i + 1}] for {url}");
+                Logs.Log($"[VanueCrawler.GetPageWithRetry]  Retry [{i + 1}] {url}");
                 // Wait before retrying 3000 ms
                 await Task.Delay(3000);
             }
         }
 
-        throw new Exception($"[VanueCrawler.GetPageWithRetry]   Failed after 3 retries: {url}");
+        throw new Exception($"[VanueCrawler.GetPageWithRetry]   Failed after 3 retries  {url}");
     }
 
     /// <summary>
